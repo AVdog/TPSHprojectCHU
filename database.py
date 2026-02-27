@@ -256,8 +256,8 @@ def parse_with_patterns(text: str) -> Optional[str]:
         if month:
             single_date = (datetime(year, month, day), datetime(year, month, day + 1))
     
-    # Extract month range
-    month_match = re.search(r"(за|в|на|опубликован|вышедш)\s*(мая|май|мае|июня|июнь|июне|июля|июль|июле|августа|август|августе|сентября|сентябрь|сентябре|октября|октябрь|октябре|ноября|ноябрь|ноябре|декабря|декабрь|декабре|января|январь|январе|февраля|февраль|феврале|марта|март|марте|апреля|апрель|апреле)\s+(\d{4})?", text_lower)
+    # Extract month range - expanded patterns
+    month_match = re.search(r"(за|в|на|опубликован|вышедш|появил)\s*(мая|май|мае|июня|июнь|июне|июля|июль|июле|августа|август|августе|сентября|сентябрь|сентябре|октября|октябрь|октябре|ноября|ноябрь|ноябре|декабря|декабрь|декабре|января|январь|январе|февраля|февраль|феврале|марта|март|марте|апреля|апрель|апреле)\s+(\d{4})?", text_lower)
     month_range = None
     if month_match:
         month_range = get_month_range(month_match.group(2), int(month_match.group(3)) if month_match.group(3) else 2025)
@@ -275,6 +275,10 @@ def parse_with_patterns(text: str) -> Optional[str]:
             return f"SELECT COUNT(DISTINCT video_id) FROM video_snapshots WHERE created_at >= '{single_date[0].strftime('%Y-%m-%d')}' AND created_at < '{single_date[1].strftime('%Y-%m-%d')}' AND delta_views_count > 0"
         if re.search(r"лайк", text_lower):
             return f"SELECT COUNT(DISTINCT video_id) FROM video_snapshots WHERE created_at >= '{single_date[0].strftime('%Y-%m-%d')}' AND created_at < '{single_date[1].strftime('%Y-%m-%d')}' AND delta_likes_count > 0"
+    
+    # COUNT videos in month (появилось, вышло, опубликовано)
+    if month_range and re.search(r"(сколько.*видео|появил|выш|опубликов)", text_lower):
+        return f"SELECT COUNT(*) FROM videos WHERE video_created_at >= '{month_range[0].strftime('%Y-%m-%d')}' AND video_created_at < '{month_range[1].strftime('%Y-%m-%d')}'"
     
     # COMBINED: creator + threshold
     if creator_id and threshold:
@@ -313,6 +317,10 @@ def parse_with_patterns(text: str) -> Optional[str]:
             return f"SELECT COALESCE(SUM(views_count), 0) FROM videos WHERE {date_filter}"
         if re.search(r"лайк", text_lower):
             return f"SELECT COALESCE(SUM(likes_count), 0) FROM videos WHERE {date_filter}"
+        if re.search(r"коммент", text_lower):
+            return f"SELECT COALESCE(SUM(comments_count), 0) FROM videos WHERE {date_filter}"
+        if re.search(r"жалоб", text_lower):
+            return f"SELECT COALESCE(SUM(reports_count), 0) FROM videos WHERE {date_filter}"
     
     # Simple creator + date (COUNT)
     if creator_id and month_range:

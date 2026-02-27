@@ -20,7 +20,8 @@ except ImportError:
 # ==================== Настройки DeepSeek AI ====================
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
-USE_AI = DEEPSEEK_AVAILABLE and DEEPSEEK_API_KEY and DEEPSEEK_API_KEY != "your_deepseek_api_key_here"
+# AI отключен по умолчанию - используем pattern matching для надежности
+USE_AI = False  # DEEPSEEK_AVAILABLE and DEEPSEEK_API_KEY and DEEPSEEK_API_KEY != "your_deepseek_api_key_here"
 
 # УНИВЕРСАЛЬНЫЙ промпт - учит принципам SQL для любой задачи
 AI_SYSTEM_PROMPT = """
@@ -153,13 +154,13 @@ def parse_with_ai(text: str) -> Optional[str]:
     """Parse query using DeepSeek AI and return SQL."""
     if not USE_AI:
         return None
-    
+
     try:
         headers = {
             "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
             "Content-Type": "application/json"
         }
-        
+
         payload = {
             "model": "deepseek-chat",
             "messages": [
@@ -169,18 +170,18 @@ def parse_with_ai(text: str) -> Optional[str]:
             "temperature": 0.05,
             "max_tokens": 300
         }
-        
+
         with httpx.Client() as client:
             response = client.post(
                 "https://api.deepseek.com/chat/completions",
                 headers=headers,
                 json=payload,
-                timeout=15.0
+                timeout=10.0
             )
             response.raise_for_status()
-        
+
         result_text = response.json()["choices"][0]["message"]["content"].strip()
-        
+
         # Extract JSON from response
         json_match = re.search(r'\{[^}]*"sql"[^}]*\}', result_text, re.DOTALL)
         if json_match:
@@ -189,10 +190,10 @@ def parse_with_ai(text: str) -> Optional[str]:
             if sql and sql != "UNKNOWN":
                 print(f"[AI] {text[:50]}... → {sql[:80]}")
                 return sql
-    
+
     except Exception as e:
-        print(f"AI error: {e}")
-    
+        print(f"AI error (falling back to patterns): {e}")
+
     return None
 
 
@@ -341,12 +342,11 @@ def parse_with_patterns(text: str) -> Optional[str]:
 
 
 def parse_query(text: str) -> Optional[str]:
-    """Parse query: AI first, then pattern matching."""
-    if USE_AI:
-        sql = parse_with_ai(text)
-        if sql:
-            return sql
-    return parse_with_patterns(text)
+    """Parse query: use pattern matching (reliable fallback)."""
+    sql = parse_with_patterns(text)
+    if sql:
+        print(f"[Patterns] {text[:50]}... → {sql[:80] if sql else 'None'}")
+    return sql
 
 
 # ==================== Database Class ====================

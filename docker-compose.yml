@@ -16,6 +16,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - tpsh_network
 
   app:
     build: .
@@ -24,20 +26,28 @@ services:
       db:
         condition: service_healthy
     environment:
-      TELEGRAM_TOKEN: ${TELEGRAM_TOKEN}
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_USER: postgres
-      DB_PASSWORD: postgres
-      DB_NAME: tpsh_db
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=tpsh_db
     volumes:
-      - .:/app
+      - .:/app:cached
       - /app/.venv
     command: >
       sh -c "
         python load_data.py &&
         python bot.py
       "
+    restart: unless-stopped
+    networks:
+      - tpsh_network
 
 volumes:
   postgres_data:
+
+networks:
+  tpsh_network:
+    driver: bridge

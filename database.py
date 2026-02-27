@@ -22,71 +22,109 @@ except ImportError:
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 USE_AI = DEEPSEEK_AVAILABLE and DEEPSEEK_API_KEY and DEEPSEEK_API_KEY != "your_deepseek_api_key_here"
 
-# Полный промпт для AI - описывает схему БД и как генерировать SQL
+# Полный промпт для AI - описывает схему БД и принципы генерации SQL
 AI_SYSTEM_PROMPT = """
-You are a SQL query generator for a Telegram bot that answers questions about video statistics.
+You are a SQL query generator for a Telegram bot about video statistics.
 
-DATABASE SCHEMA:
-1. Table `videos` - final statistics per video:
-   - id (UUID) - video identifier
-   - creator_id (UUID) - creator identifier
-   - video_created_at (TIMESTAMP WITH TIME ZONE) - when video was published
-   - views_count (INT) - total views
-   - likes_count (INT) - total likes
-   - comments_count (INT) - total comments
-   - reports_count (INT) - total reports
+=== DATABASE SCHEMA ===
 
-2. Table `video_snapshots` - hourly snapshots:
-   - id (UUID) - snapshot identifier
-   - video_id (UUID) - reference to videos.id
-   - created_at (TIMESTAMP WITH TIME ZONE) - snapshot time
-   - views_count, likes_count, comments_count, reports_count (INT) - current values
-   - delta_views_count, delta_likes_count, delta_comments_count, delta_reports_count (INT) - change from previous hour
+TABLE: videos (one row per video with final statistics)
+- id (UUID) - unique video identifier
+- creator_id (UUID) - who created the video
+- video_created_at (TIMESTAMP WITH TIME ZONE) - when video was published
+- views_count (INTEGER) - total number of views
+- likes_count (INTEGER) - total number of likes
+- comments_count (INTEGER) - total number of comments
+- reports_count (INTEGER) - total number of reports
 
-YOUR TASK:
-1. Parse the Russian natural language query
-2. Generate appropriate SQL query based on the question
-3. Return ONLY a JSON object with "sql" field
+TABLE: video_snapshots (hourly statistics snapshots)
+- id (UUID) - unique snapshot identifier
+- video_id (UUID) - links to videos.id
+- created_at (TIMESTAMP WITH TIME ZONE) - when snapshot was taken
+- views_count, likes_count, comments_count, reports_count (INTEGER) - values at snapshot time
+- delta_views_count, delta_likes_count, delta_comments_count, delta_reports_count (INTEGER) - change from previous hour
 
-QUERY PATTERNS:
+=== HOW TO BUILD QUERIES ===
 
-| Question Type | Example | SQL |
-|--------------|---------|-----|
-| Total videos | "Сколько всего видео?" | SELECT COUNT(*) FROM videos |
-| Total likes (all videos) | "Сколько лайков набрали все видео?" | SELECT COALESCE(SUM(likes_count), 0) FROM videos |
-| Total views (all videos) | "Сколько просмотров у всех видео?" | SELECT COALESCE(SUM(views_count), 0) FROM videos |
-| Total comments | "Сколько комментариев?" | SELECT COALESCE(SUM(comments_count), 0) FROM videos |
-| Total reports | "Сколько жалоб?" | SELECT COALESCE(SUM(reports_count), 0) FROM videos |
-| Videos by creator + date | "Сколько видео у креатора с id ... с 1 по 5 ноября 2025" | SELECT COUNT(*) FROM videos WHERE creator_id = 'UUID' AND video_created_at >= '2025-11-01' AND video_created_at < '2025-11-06' |
-| Videos in date range | "Сколько видео появилось за май 2025" | SELECT COUNT(*) FROM videos WHERE video_created_at >= '2025-05-01' AND video_created_at < '2025-06-01' |
-| Videos with views > N | "Сколько видео набрало больше 100000 просмотров?" | SELECT COUNT(*) FROM videos WHERE views_count > 100000 |
-| Views gained on date | "На сколько просмотров выросли видео 28 ноября 2025" | SELECT COALESCE(SUM(delta_views_count), 0) FROM video_snapshots WHERE created_at >= '2025-11-28' AND created_at < '2025-11-29' |
-| Videos with new views on date | "Сколько видео получили новые просмотры 27 ноября" | SELECT COUNT(DISTINCT video_id) FROM video_snapshots WHERE created_at >= '2025-11-27' AND created_at < '2025-11-28' AND delta_views_count > 0 |
+STEP 1: Identify what to COUNT/SUM
+- "сколько видео", "количество видео" → COUNT(*) or COUNT(video_id)
+- "сколько просмотров", "сумма просмотров", "общее количество просмотров" → SUM(views_count)
+- "сколько лайков", "сумма лайков" → SUM(likes_count)
+- "сколько комментариев", "сумма комментариев" → SUM(comments_count)
+- "сколько жалоб", "сумма жалоб" → SUM(reports_count)
+- "на сколько выросли", "прирост просмотров", "дельта" → SUM(delta_views_count) from video_snapshots
+- "на сколько выросли лайки" → SUM(delta_likes_count) from video_snapshots
+- "сколько разных видео" → COUNT(DISTINCT video_id)
 
-DATE PARSING:
-- "28 ноября 2025" → '2025-11-28'
-- "за май 2025", "в мае 2025" → >= '2025-05-01' AND < '2025-06-01'
-- "с 1 по 5 ноября" → >= '2025-11-01' AND < '2025-11-06'
-- Default year is 2025
+STEP 2: Identify which TABLE
+- Use `videos` table for: final statistics, video counts, creator info, total metrics
+- Use `video_snapshots` table for: hourly changes, deltas, growth on specific dates, "на сколько выросли"
 
-RULES:
-1. ALWAYS use COALESCE(..., 0) for SUM to return 0 instead of NULL
+STEP 3: Identify FILTERS
+- "у креатора", "creator id" → WHERE creator_id = 'UUID'
+- "за май 2025", "в июне 2025", "published in June" → WHERE video_created_at >= 'YYYY-MM-01' AND < 'YYYY-MM+1-01'
+- "28 ноября 2025", "on November 28" → WHERE created_at >= '2025-11-28' AND < '2025-11-29' (for snapshots)
+- "больше 100000", "more than N views" → WHERE views_count > N
+- "больше N likes" → WHERE likes_count > N
+- "получили новые просмотры", "had new views" → WHERE delta_views_count > 0
+- "получили новые лайки" → WHERE delta_likes_count > 0
+
+STEP 4: DATE PARSING
+- "28 ноября 2025" → single day: >= '2025-11-28' AND < '2025-11-29'
+- "за май 2025", "в мае 2025", "июнь 2025" → full month: >= '2025-05-01' AND < '2025-06-01'
+- "с 1 по 5 ноября" → date range: >= '2025-11-01' AND < '2025-11-06'
+- Default year: 2025
+
+=== QUERY CONSTRUCTION RULES ===
+
+1. For SUM queries, ALWAYS use COALESCE(SUM(...), 0) to return 0 instead of NULL
 2. For date ranges, use >= start AND < end (exclusive end)
-3. For "за май", "в мае" use full month range
-4. Extract UUIDs as-is (32 hex chars or 8-4-4-4-12 format)
-5. Return ONLY valid JSON: {"sql": "SELECT ..."}
-6. If you cannot generate SQL: {"sql": "UNKNOWN"}
-7. NEVER include explanations, only JSON
+3. For "за [месяц]", "в [месяце]" use full month: 1st to 1st of next month
+4. Return ONLY JSON: {"sql": "SELECT ..."}
+5. If cannot generate: {"sql": "UNKNOWN"}
 
-EXAMPLES:
-Input: "Сколько всего видео есть в системе?"
-Output: {"sql": "SELECT COUNT(*) FROM videos"}
+=== EXAMPLES ===
 
-Input: "Какое общее количество лайков набрали все видео?"
-Output: {"sql": "SELECT COALESCE(SUM(likes_count), 0) FROM videos"}
+Q: "Сколько всего видео?"
+A: {"sql": "SELECT COUNT(*) FROM videos"}
 
-Input: "Сколько видео появилось на платформе за май 2025"
-Output: {"sql": "SELECT COUNT(*) FROM videos WHERE video_created_at >= '2025-05-01' AND video_created_at < '2025-06-01'"}
+Q: "Сколько лайков набрали все видео?"
+A: {"sql": "SELECT COALESCE(SUM(likes_count), 0) FROM videos"}
+
+Q: "Сколько видео у креатора с id abc123... с 1 по 5 ноября?"
+A: {"sql": "SELECT COUNT(*) FROM videos WHERE creator_id = 'abc123...' AND video_created_at >= '2025-11-01' AND video_created_at < '2025-11-06'"}
+
+Q: "Сколько просмотров набрали видео, опубликованные в июне 2025?"
+A: {"sql": "SELECT COALESCE(SUM(views_count), 0) FROM videos WHERE video_created_at >= '2025-06-01' AND video_created_at < '2025-07-01'"}
+
+Q: "Какое количество лайков у видео, вышедших в июле 2025?"
+A: {"sql": "SELECT COALESCE(SUM(likes_count), 0) FROM videos WHERE video_created_at >= '2025-07-01' AND video_created_at < '2025-08-01'"}
+
+Q: "На сколько просмотров выросли все видео 28 ноября 2025?"
+A: {"sql": "SELECT COALESCE(SUM(delta_views_count), 0) FROM video_snapshots WHERE created_at >= '2025-11-28' AND created_at < '2025-11-29'"}
+
+Q: "На сколько выросли лайки 27 ноября?"
+A: {"sql": "SELECT COALESCE(SUM(delta_likes_count), 0) FROM video_snapshots WHERE created_at >= '2025-11-27' AND created_at < '2025-11-28'"}
+
+Q: "Сколько разных видео получили новые просмотры 27 ноября?"
+A: {"sql": "SELECT COUNT(DISTINCT video_id) FROM video_snapshots WHERE created_at >= '2025-11-27' AND created_at < '2025-11-28' AND delta_views_count > 0"}
+
+Q: "Сколько разных видео получили новые лайки 28 ноября?"
+A: {"sql": "SELECT COUNT(DISTINCT video_id) FROM video_snapshots WHERE created_at >= '2025-11-28' AND created_at < '2025-11-29' AND delta_likes_count > 0"}
+
+Q: "Сколько видео набрало больше 100000 просмотров?"
+A: {"sql": "SELECT COUNT(*) FROM videos WHERE views_count > 100000"}
+
+Q: "Сколько видео имеют больше 1000 лайков?"
+A: {"sql": "SELECT COUNT(*) FROM videos WHERE likes_count > 1000"}
+
+Q: "Сколько комментариев набрали видео за август 2025?"
+A: {"sql": "SELECT COALESCE(SUM(comments_count), 0) FROM videos WHERE video_created_at >= '2025-08-01' AND video_created_at < '2025-09-01'"}
+
+Q: "Сколько жалоб получили видео за сентябрь 2025?"
+A: {"sql": "SELECT COALESCE(SUM(reports_count), 0) FROM videos WHERE video_created_at >= '2025-09-01' AND video_created_at < '2025-10-01'"}
+
+NOW GENERATE SQL FOR THE USER'S QUERY. RETURN ONLY JSON.
 """
 
 
@@ -175,11 +213,52 @@ def parse_with_patterns(text: str) -> Optional[str]:
     if re.search(r"сколько всего видео", text_lower):
         return "SELECT COUNT(*) FROM videos"
     
+    # Videos with views threshold (ПРИОРИТЕТ)
+    match = re.search(r"(больше|более).*?(\d+).*?просмотр", text_lower)
+    if match:
+        threshold = match.group(2)
+        return f"SELECT COUNT(*) FROM videos WHERE views_count > {threshold}"
+    match = re.search(r"набрал.*больше.*?(\d+).*?просмотр", text_lower)
+    if match:
+        threshold = match.group(1)
+        return f"SELECT COUNT(*) FROM videos WHERE views_count > {threshold}"
+    
+    # Videos with likes threshold
+    match = re.search(r"(больше|более).*?(\d+).*?лайк", text_lower)
+    if match:
+        threshold = match.group(2)
+        return f"SELECT COUNT(*) FROM videos WHERE likes_count > {threshold}"
+    match = re.search(r"имеют.*больше.*?(\d+).*?лайк", text_lower)
+    if match:
+        threshold = match.group(1)
+        return f"SELECT COUNT(*) FROM videos WHERE likes_count > {threshold}"
+    
+    # COMBINED: Views/Likes/Comments/Reports for videos in month
+    month_match = re.search(r"(за|в|на|вышедш|опубликован)\s*(мая|май|мае|июня|июнь|июне|июля|июль|июле|августа|август|августе|сентября|сентябрь|сентябре|октября|октябрь|октябре|ноября|ноябрь|ноябре|декабря|декабрь|декабре|января|январь|январе|февраля|февраль|феврале|марта|март|марте|апреля|апрель|апреле)\s+(\d{4})?", text_lower)
+    if month_match:
+        month_str = month_match.group(2)
+        year = int(month_match.group(3)) if month_match.group(3) else 2025
+        start, end = get_month_range(month_str, year)
+        if start and end:
+            date_filter = f"video_created_at >= '{start.strftime('%Y-%m-%d')}' AND video_created_at < '{end.strftime('%Y-%m-%d')}'"
+            # Views
+            if re.search(r"просмотр", text_lower) and re.search(r"(суммарн|общ|сколько|дай|набрал)", text_lower):
+                return f"SELECT COALESCE(SUM(views_count), 0) FROM videos WHERE {date_filter}"
+            # Likes
+            if re.search(r"лайк", text_lower) and re.search(r"(суммарн|общ|сколько|дай|количеств)", text_lower):
+                return f"SELECT COALESCE(SUM(likes_count), 0) FROM videos WHERE {date_filter}"
+            # Comments
+            if re.search(r"коммент", text_lower) and re.search(r"(суммарн|общ|сколько|дай|набрал)", text_lower):
+                return f"SELECT COALESCE(SUM(comments_count), 0) FROM videos WHERE {date_filter}"
+            # Reports
+            if re.search(r"(жалоб|репорт)", text_lower) and re.search(r"(суммарн|общ|сколько|дай|получил)", text_lower):
+                return f"SELECT COALESCE(SUM(reports_count), 0) FROM videos WHERE {date_filter}"
+    
     # Total likes
     if re.search(r"лайк", text_lower) and re.search(r"(сколько|посчитай|сумма|общее|дай)", text_lower):
         return "SELECT COALESCE(SUM(likes_count), 0) FROM videos"
     
-    # Total views
+    # Total views (but not "на сколько выросли")
     if re.search(r"просмотр", text_lower) and re.search(r"(сколько|посчитай|сумма|общее|дай)", text_lower) and not re.search(r"вырос|на сколько", text_lower):
         return "SELECT COALESCE(SUM(views_count), 0) FROM videos"
     
@@ -191,13 +270,7 @@ def parse_with_patterns(text: str) -> Optional[str]:
     if re.search(r"(жалоб|репорт)", text_lower) and re.search(r"(сколько|посчитай|сумма|общее|дай)", text_lower):
         return "SELECT COALESCE(SUM(reports_count), 0) FROM videos"
     
-    # Videos with views threshold
-    match = re.search(r"(больше|более).*?(\d+).*?просмотр", text_lower)
-    if match:
-        threshold = match.group(2)
-        return f"SELECT COUNT(*) FROM videos WHERE views_count > {threshold}"
-    
-    # Videos appeared in month (e.g., "за май 2025", "в мае 2025")
+    # Videos appeared in month (COUNT not SUM)
     match = re.search(r"(за|в)\s+(мая|май|мае|июня|июнь|июне|июля|июль|июле|августа|август|августе|сентября|сентябрь|сентябре|октября|октябрь|октябре|ноября|ноябрь|ноябре|декабря|декабрь|декабре|января|январь|январе|февраля|февраль|феврале|марта|март|марте|апреля|апрель|апреле)\s+(\d{4})?", text_lower)
     if match and re.search(r"сколько.*видео", text_lower):
         month_str = match.group(2)
@@ -205,6 +278,24 @@ def parse_with_patterns(text: str) -> Optional[str]:
         start, end = get_month_range(month_str, year)
         if start and end:
             return f"SELECT COUNT(*) FROM videos WHERE video_created_at >= '{start.strftime('%Y-%m-%d')}' AND video_created_at < '{end.strftime('%Y-%m-%d')}'"
+    
+    # SNAPSHOT QUERIES: "на сколько выросли", "прирост"
+    # "На сколько просмотров выросли все видео 28 ноября 2025?"
+    date_match = re.search(r"(\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+(\d{4})?", text_lower)
+    if date_match and re.search(r"(вырос|прирост|дельта)", text_lower):
+        day = int(date_match.group(1))
+        month_str = date_match.group(2)
+        year = int(date_match.group(3)) if date_match.group(3) else 2025
+        month = MONTHS_RU.get(month_str)
+        if month:
+            start = datetime(year, month, day)
+            end = datetime(year, month, day + 1)
+            # Views delta
+            if re.search(r"просмотр", text_lower):
+                return f"SELECT COALESCE(SUM(delta_views_count), 0) FROM video_snapshots WHERE created_at >= '{start.strftime('%Y-%m-%d')}' AND created_at < '{end.strftime('%Y-%m-%d')}'"
+            # Likes delta
+            if re.search(r"лайк", text_lower):
+                return f"SELECT COALESCE(SUM(delta_likes_count), 0) FROM video_snapshots WHERE created_at >= '{start.strftime('%Y-%m-%d')}' AND created_at < '{end.strftime('%Y-%m-%d')}'"
     
     return None
 

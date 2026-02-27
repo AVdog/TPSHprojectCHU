@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  # PostgreSQL: база данных
+  db:
+    image: postgres:15
+    container_name: tpsh_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: tpsh_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations/001_create_tables.sql:/docker-entrypoint-initdb.d/001_create_tables.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Бот: загрузка данных и запуск
+  app:
+    build: .
+    container_name: tpsh_bot
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      TELEGRAM_TOKEN: ${TELEGRAM_TOKEN}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: tpsh_db
+    volumes:
+      - .:/app
+    command: >
+      sh -c "
+        sleep 5 &&
+        python load_data.py &&
+        python bot.py
+      "
+
+volumes:
+  postgres_data:

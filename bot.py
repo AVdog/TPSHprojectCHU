@@ -1,7 +1,7 @@
 """
 Telegram-бот для статистики видео.
-Принимает запросы на русском языке, возвращает ОДНО число.
-Использует DeepSeek AI + pattern matching для парсинга.
+Использует DeepSeek AI для генерации SQL запросов.
+Возвращает ОДНО число в ответ.
 """
 
 import os
@@ -20,16 +20,18 @@ db = Database()
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка текстовых сообщений. Возвращает ОДНО число."""
     user_message = update.message.text
-    query_result = parse_query(user_message)
-    query_type = query_result.get("type")
 
-    if query_type == "unknown":
+    # Генерируем SQL через AI/patterns
+    sql = parse_query(user_message)
+
+    if not sql or sql == "UNKNOWN":
         await update.message.reply_text(
             "Не понял вопрос. Попробуйте спросить по-другому.\n\n"
             "Примеры:\n"
             "• Сколько всего видео?\n"
             "• Какое общее количество лайков?\n"
-            "• Сколько видео набрало больше 100000 просмотров?"
+            "• Сколько видео набрало больше 100000 просмотров?\n"
+            "• Сколько видео появилось за май 2025?"
         )
         return
 
@@ -37,32 +39,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if db.conn is None:
             await db.connect()
 
-        result = None
-
-        if query_type == "total_videos":
-            result = await db.get_total_videos()
-        elif query_type == "total_likes":
-            result = await db.get_total_likes()
-        elif query_type == "total_views":
-            result = await db.get_total_views()
-        elif query_type == "total_comments":
-            result = await db.get_total_comments()
-        elif query_type == "total_reports":
-            result = await db.get_total_reports()
-        elif query_type == "videos_by_creator_date":
-            result = await db.get_videos_by_creator_and_date(
-                query_result["creator_id"],
-                query_result["start_date"],
-                query_result["end_date"],
-            )
-        elif query_type == "videos_with_views_threshold":
-            result = await db.get_videos_with_views_more_than(query_result["threshold"])
-        elif query_type == "total_views_on_date":
-            result = await db.get_total_views_on_date(query_result["date"])
-        elif query_type == "videos_with_new_views_on_date":
-            result = await db.get_videos_with_new_views_on_date(query_result["date"])
-
-        # Возвращаем ТОЛЬКО число
+        # Выполняем SQL и возвращаем число
+        result = await db.execute_sql(sql)
         await update.message.reply_text(str(result))
 
     except Exception as e:

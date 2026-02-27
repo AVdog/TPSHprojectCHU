@@ -1,7 +1,6 @@
 version: '3.8'
 
 services:
-  # PostgreSQL: база данных
   db:
     image: postgres:15
     container_name: tpsh_postgres
@@ -18,7 +17,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # Бот: загрузка данных и запуск
   app:
     build: .
     container_name: tpsh_bot
@@ -34,9 +32,9 @@ services:
       DB_NAME: tpsh_db
     volumes:
       - .:/app
+      - /app/.venv
     command: >
       sh -c "
-        sleep 5 &&
         python load_data.py &&
         python bot.py
       "
